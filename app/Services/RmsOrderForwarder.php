@@ -6,6 +6,8 @@ use App\Models\Deal;
 use App\Models\ItemVariant;
 use App\Models\Order;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 /**
  * Forwards a placed online order into the RMS (genz-rms-apis) so it shows up in
@@ -62,7 +64,20 @@ class RmsOrderForwarder
             ->acceptJson()
             ->post($url, $payload);
 
-        return $response->successful();
+        if (! $response->successful()) {
+            // Non-2xx does NOT throw, so make the reason visible in the log
+            // (bad secret → 401, missing route → 404, un-migrated enum → 500, etc.).
+            Log::warning('RMS order forward returned non-2xx', [
+                'order' => $order->order_number,
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => Str::limit($response->body(), 500),
+            ]);
+
+            return false;
+        }
+
+        return true;
     }
 
     /** Map a web order line back to the shared menu-item slug (or null). */

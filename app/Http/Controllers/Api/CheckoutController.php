@@ -8,6 +8,7 @@ use App\Mail\OrderConfirmationMail;
 use App\Models\Deal;
 use App\Models\ItemVariant;
 use App\Models\Order;
+use App\Services\AdminMenuPricing;
 use App\Services\RmsOrderForwarder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,14 +19,21 @@ use Illuminate\Validation\ValidationException;
 
 class CheckoutController extends Controller
 {
+    public function __construct(private readonly AdminMenuPricing $pricing) {}
+
     public function checkout(Request $request): JsonResponse
     {
         $data = $request->validate([
             'items' => ['array'],
-            'items.*.variant_id' => ['required', 'integer', 'exists:item_variants,id'],
+            // A line references a variant either by legacy numeric id OR by slug
+            // (+ size for sized items). Slug lines are re-priced from the admin feed.
+            'items.*.variant_id' => ['nullable', 'integer', 'exists:item_variants,id'],
+            'items.*.item_slug' => ['nullable', 'string', 'max:255'],
+            'items.*.size' => ['nullable', 'string', 'max:255'],
             'items.*.quantity' => ['required', 'integer', 'min:1', 'max:99'],
             'deals' => ['array'],
-            'deals.*.deal_id' => ['required', 'integer', 'exists:deals,id'],
+            'deals.*.deal_id' => ['nullable', 'integer', 'exists:deals,id'],
+            'deals.*.deal_slug' => ['nullable', 'string', 'max:255'],
             'deals.*.quantity' => ['required', 'integer', 'min:1', 'max:99'],
             'deals.*.selections' => ['array'],
             'deals.*.selections.*' => ['string', 'max:255'],
@@ -51,35 +59,85 @@ class CheckoutController extends Controller
             $subtotal = 0.0;
 
             foreach ($items as $row) {
-                $variant = ItemVariant::with('foodItem')->findOrFail($row['variant_id']);
                 $qty = (int) $row['quantity'];
-                $lineTotal = (float) $variant->price * $qty;
+
+                if (! empty($row['variant_id'])) {
+                    // Legacy numeric path — re-price from the local DB row.
+                    $variant = ItemVariant::with('foodItem')->findOrFail($row['variant_id']);
+                    $unitPrice = (float) $variant->price;
+                    $line = [
+                        'item_variant_id' => $variant->id,
+                        'name' => $variant->foodItem->name,
+                        'variant_label' => $variant->label,
+                    ];
+                } elseif (! empty($row['item_slug'])) {
+                    // Slug path — re-price from the admin feed (trusted, not the client).
+                    $priced = $this->pricing->priceItem($row['item_slug'], $row['size'] ?? null);
+                    if ($priced === null) {
+                        throw ValidationException::withMessages([
+                            'items' => ["This item is no longer available: {$row['item_slug']}."],
+                        ]);
+                    }
+                    $unitPrice = $priced['price'];
+                    $line = [
+                        'item_variant_id' => null,
+                        'name' => $priced['name'],
+                        'variant_label' => $priced['label'],
+                    ];
+                } else {
+                    throw ValidationException::withMessages([
+                        'items' => ['Each item needs a variant_id or item_slug.'],
+                    ]);
+                }
+
+                $lineTotal = $unitPrice * $qty;
                 $subtotal += $lineTotal;
-                $lines[] = [
-                    'item_variant_id' => $variant->id,
+                $lines[] = $line + [
                     'deal_id' => null,
-                    'name' => $variant->foodItem->name,
-                    'variant_label' => $variant->label,
                     'selections' => null,
                     'quantity' => $qty,
-                    'unit_price' => $variant->price,
+                    'unit_price' => $unitPrice,
                     'line_total' => $lineTotal,
                 ];
             }
 
             foreach ($deals as $row) {
-                $deal = Deal::findOrFail($row['deal_id']);
                 $qty = (int) $row['quantity'];
-                $lineTotal = (float) $deal->price * $qty;
+
+                if (! empty($row['deal_id'])) {
+                    $deal = Deal::findOrFail($row['deal_id']);
+                    $unitPrice = (float) $deal->price;
+                    $line = [
+                        'deal_id' => $deal->id,
+                        'name' => $deal->name,
+                        'variant_label' => $deal->selection_size,
+                    ];
+                } elseif (! empty($row['deal_slug'])) {
+                    $priced = $this->pricing->priceDeal($row['deal_slug']);
+                    if ($priced === null) {
+                        throw ValidationException::withMessages([
+                            'deals' => ["This deal is no longer available: {$row['deal_slug']}."],
+                        ]);
+                    }
+                    $unitPrice = $priced['price'];
+                    $line = [
+                        'deal_id' => null,
+                        'name' => $priced['name'],
+                        'variant_label' => $priced['label'],
+                    ];
+                } else {
+                    throw ValidationException::withMessages([
+                        'deals' => ['Each deal needs a deal_id or deal_slug.'],
+                    ]);
+                }
+
+                $lineTotal = $unitPrice * $qty;
                 $subtotal += $lineTotal;
-                $lines[] = [
+                $lines[] = $line + [
                     'item_variant_id' => null,
-                    'deal_id' => $deal->id,
-                    'name' => $deal->name,
-                    'variant_label' => $deal->selection_size,
                     'selections' => $row['selections'] ?? null,
                     'quantity' => $qty,
-                    'unit_price' => $deal->price,
+                    'unit_price' => $unitPrice,
                     'line_total' => $lineTotal,
                 ];
             }
