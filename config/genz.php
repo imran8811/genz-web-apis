@@ -4,7 +4,7 @@ return [
     'restaurant' => [
         'name' => 'GEN Z Foods',
         'tagline' => 'Premium Fast Food Restaurant',
-        'address' => 'Kacha Phatak, Sher Shah Road, Multan',
+        'address' => 'Garden Town, Sher Shah Road, Multan',
         'phone' => '03 000-911-000',
         'whatsapp' => '03000911000',
         'timing' => '02:00 PM - 2:00 AM',
