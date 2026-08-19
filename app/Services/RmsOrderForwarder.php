@@ -24,7 +24,17 @@ class RmsOrderForwarder
         $secret = config('genz.rms.secret');
 
         if (! $url || ! $secret) {
-            return false; // integration not configured
+            // Logged, not returned quietly: a missing key on a deployed host
+            // looks exactly like a successful forward from the outside — the
+            // customer's order goes through and nothing reaches the RMS. The
+            // one place that knows is this line.
+            Log::warning('RMS order forward skipped — integration not configured', [
+                'order' => $order->order_number,
+                'has_url' => (bool) $url,
+                'has_secret' => (bool) $secret,
+            ]);
+
+            return false;
         }
 
         $order->loadMissing('items');
