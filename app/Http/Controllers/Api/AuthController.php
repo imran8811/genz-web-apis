@@ -71,6 +71,73 @@ class AuthController extends Controller
         return response()->json(['message' => 'Logged out.']);
     }
 
+    /**
+     * Delete the signed-in customer's account (Google Play requires this to be
+     * available in-app for any app that lets you create an account).
+     *
+     * The user row is anonymised rather than deleted: orders reference it, and
+     * destroying them would erase the sales history the business runs on. What
+     * actually goes is every piece of personal data — the profile, the saved
+     * addresses, the cart, and the name/phone/address copied onto each past
+     * order — leaving only the figures and timestamps needed for the books.
+     *
+     * Deletion is refused while an order is still in flight, because the
+     * kitchen and the rider still need the delivery details to complete it.
+     */
+    public function deleteAccount(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'password' => ['required', 'string'],
+        ]);
+
+        if (! Hash::check($request->input('password'), $user->password)) {
+            throw ValidationException::withMessages([
+                'password' => ['That password is incorrect.'],
+            ]);
+        }
+
+        $active = $user->orders()
+            ->whereNotIn('status', ['delivered', 'cancelled'])
+            ->exists();
+
+        if ($active) {
+            return response()->json([
+                'message' => 'You have an order on the way. We can delete your account once it has been delivered or cancelled.',
+            ], 409);
+        }
+
+        DB::transaction(function () use ($user): void {
+            // Strip the customer's details from past orders, keeping the money
+            // and the line items so reporting still adds up.
+            $user->orders()->update([
+                'shipping_name' => 'Deleted user',
+                'shipping_phone' => '',
+                'shipping_address_line_1' => 'Deleted',
+                'shipping_address_line_2' => null,
+                'shipping_area' => null,
+                'shipping_landmark' => null,
+                'notes' => null,
+            ]);
+
+            $user->shippingAddresses()->delete();
+            $user->cart?->delete();
+            $user->tokens()->delete();
+
+            $user->forceFill([
+                'name' => 'Deleted user',
+                // Unguessable and unroutable, so the account can never be
+                // logged into or recovered, and the unique index still holds.
+                'email' => 'deleted-' . $user->id . '-' . Str::random(16) . '@deleted.invalid',
+                'phone' => null,
+                'password' => Hash::make(Str::random(64)),
+            ])->save();
+        });
+
+        return response()->json(['message' => 'Your account and personal data have been deleted.']);
+    }
+
     public function forgotPassword(Request $request): JsonResponse
     {
         $data = $request->validate(['email' => ['required', 'email']]);
