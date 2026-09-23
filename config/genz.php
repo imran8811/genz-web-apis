@@ -18,8 +18,12 @@ return [
         'code' => 'PKR',
         'symbol' => 'Rs',
     ],
-    // Flat delivery fee (PKR). Set 0 for free delivery.
-    'delivery_fee' => 0,
+    // Flat delivery fee (PKR), added to every order. Set 0 for free delivery.
+    // This one value is the whole story: `GET /site` hands it to genz-web/genz-app
+    // for the cart and checkout summaries, CheckoutController re-prices the order
+    // with it, and RmsOrderForwarder carries it into the RMS as `delivery_charge`.
+    // Changing it here changes what is shown *and* what is charged, together.
+    'delivery_fee' => (float) env('DELIVERY_FEE', 100),
 
     // Canonical menu feed — source of truth is now genz-admin (genz-admin-apis),
     // pulled by `php artisan menu:sync` to keep a trusted price copy for checkout
