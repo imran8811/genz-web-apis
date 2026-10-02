@@ -7,7 +7,7 @@ return [
         'address' => 'Garden Town, Sher Shah Road, Multan',
         'phone' => '03 000-911-000',
         'whatsapp' => '03000911000',
-        'timing' => '02:00 PM - 2:00 AM',
+        'timing' => '01:00 PM - 1:00 AM',
         'features' => [
             'Family Hall', 'Relax Environment', 'Roof Top Sitting',
             'Professional Riders', 'Quick Delivery', 'Take Away',
